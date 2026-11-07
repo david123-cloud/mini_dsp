@@ -316,3 +316,8 @@ python3 tests/gen_temp_wav.py --force    # 显式覆盖
 参数：48000 帧、单声道、16-bit、48000 Hz、440 Hz 正弦、幅度 0.25（峰值 8192 计数），
 标准 44 字节头、无额外 chunk，文件共 **96044** 字节。
 Python 只用于生成测试素材，不是 DSP 运行依赖。
+
+## 8. 许可证
+
+MIT License，见 [LICENSE](LICENSE)。
+
