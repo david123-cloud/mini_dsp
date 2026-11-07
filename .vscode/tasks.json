@@ -1,0 +1,106 @@
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "tasks": [
+    {
+      "label": "configure",
+      "detail": "CMake 配置到 build/（Debug，便于 gdb 断点）",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-S", ".",
+        "-B", "build",
+        "-DCMAKE_BUILD_TYPE=Debug"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "build",
+      "detail": "增量编译（默认构建任务，Ctrl+Shift+B）",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "build", "--parallel"],
+      "dependsOn": "configure",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "build:strict",
+      "detail": "独立目录 build-strict：-Werror + ASan/UBSan",
+      "type": "shell",
+      "command": "cmake -S . -B build-strict -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMINI_DSP_WERROR=ON -DMINI_DSP_SANITIZE=ON && cmake --build build-strict --parallel",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run: fft",
+      "detail": "跑 FFT/IFFT 演示（自带断言，失败返回非零）",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/dsp_demo",
+      "args": ["fft"],
+      "dependsOn": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "run: wav (default paths)",
+      "detail": "tests/temp.wav -> tests/output.wav",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/dsp_demo",
+      "args": ["wav"],
+      "dependsOn": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "run: wav (choose files)",
+      "detail": "运行时手动输入输入/输出 WAV 路径",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/dsp_demo",
+      "args": ["wav", "${input:inputWav}", "${input:outputWav}"],
+      "dependsOn": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "verify",
+      "detail": "构建 + 跑 demo + 校验 WAV（跳过 ctest 与自检）",
+      "type": "shell",
+      "command": "bash tests/verify.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "verify:tests",
+      "detail": "完整验收：额外跑 ctest 与临时管线自检",
+      "type": "shell",
+      "command": "RUN_TESTS=1 bash tests/verify.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "test wav: regenerate",
+      "detail": "重新生成 tests/temp.wav（会覆盖）",
+      "type": "shell",
+      "command": "python3 tests/gen_temp_wav.py --force",
+      "problemMatcher": []
+    },
+    {
+      "label": "clean",
+      "detail": "删除 build/ 与 build-strict/",
+      "type": "shell",
+      "command": "rm -rf build build-strict",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "inputWav",
+      "type": "promptString",
+      "description": "输入 WAV 路径（相对项目根目录）",
+      "default": "tests/temp.wav"
+    },
+    {
+      "id": "outputWav",
+      "type": "promptString",
+      "description": "输出 WAV 路径（已存在会被覆盖）",
+      "default": "tests/output.wav"
+    }
+  ]
+}

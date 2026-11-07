@@ -1,0 +1,8 @@
+build/
+build-*/
+*.o
+*.obj
+*.a
+*.exe
+compile_commands.json
+tests/output.wav

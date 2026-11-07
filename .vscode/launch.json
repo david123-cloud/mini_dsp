@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: dsp_demo fft",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/dsp_demo",
+      "args": ["fft"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "build"
+    },
+    {
+      "name": "Debug: dsp_demo wav",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/dsp_demo",
+      "args": ["wav", "tests/temp.wav", "tests/output.wav"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "build"
+    }
+  ]
+}

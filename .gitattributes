@@ -1,0 +1,8 @@
+# 仓库内统一 LF；在 Windows 上检出时由 git 按需转换
+* text=auto eol=lf
+
+# 二进制资源不做行尾转换与文本合并
+*.wav binary
+*.png binary
+*.jpg binary
+*.zip binary
