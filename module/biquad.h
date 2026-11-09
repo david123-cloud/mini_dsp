@@ -23,9 +23,13 @@ struct biquad_config {
 };
 
 /*
- * Direct form I state, mono only:
+ * Direct form I state for one channel:
  *   y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
  * The five coefficients are stored already normalised by a0.
+ *
+ * The struct below is the mono building block.  The *module* wraps one of
+ * these per channel, so a pipeline can carry up to 32 interleaved channels
+ * while each channel keeps its own history.
  */
 struct biquad_state {
     float b0;

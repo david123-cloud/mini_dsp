@@ -28,7 +28,7 @@ mini_dsp/
 │   ├── fft.h                  # struct fft_runtime + 固定 256 点接口
 │   └── fft.c                  # 基 2、迭代、原地 FFT/IFFT
 ├── module/                    # dsp_module 实现
-│   ├── biquad.h / biquad.c    # RBJ 公式，高通 / 低通，直接 I 型，仅单声道
+│   ├── biquad.h / biquad.c    # RBJ 公式，高通 / 低通，直接 I 型；模块支持 32 声道
 │   ├── agc.h / agc.c          # **固定增益**模块（历史名称为 AGC）
 │   └── ns.h / ns.c            # 宽带噪声门（向下扩展器），多声道
 ├── audio/                     # 文件 I/O 与数值转换
@@ -202,6 +202,9 @@ int wav_write(const char *path, const struct wav_file *wav);
 - 固定 `FFT_SIZE = 256`，基 2、迭代、原地；`fft_forward` 接收且只接收 256 个实数样本
 - `fft_transform(inverse=0)`：位反转 + 蝶形，负角度，不缩放
 - `fft_transform(inverse=1)`：正角度，结束时实部与虚部都除以 256
+- **运行时尺寸（`fft_plan`）**：`fft_plan_init(plan, n)` 支持任意 2 的幂，
+  `fft_plan_forward/inverse` 处理时不再分配内存。960 帧的 period 用 1024 点补零分析，
+  分辨率 46.875 Hz
 - 处理期间不分配内存；循环索引用 `offset`/`span`/`half`/`idx`，避免与虚数单位混淆
 - 幅度分析、测试信号生成都在 demo 层，不在算法实现里
 
@@ -229,7 +232,7 @@ int wav_write(const char *path, const struct wav_file *wav);
 - `hysteresis_db` 拉开"关门"和"开门"两个阈值，避免在阈值附近抖动
 - `attack_ms` 控制增益关闭速度，`release_ms` 控制恢复速度（一阶平滑，
   系数由 `1 - exp(-1/(tau*fs))` 推出）
-- **多声道支持**：每个声道独立的包络 / 增益 / 锁存状态，最多 `NS_MAX_CHANNELS`(8) 路，
+- **多声道支持**：每个声道独立的包络 / 增益 / 锁存状态，最多 `NS_MAX_CHANNELS`(32) 路，
   超出明确返回 `DSP_ERR_UNSUPPORTED`
 - 声道数变化会重置历史，避免把上一个布局的状态套到新布局上
 - 配置全部做范围校验（-96..0 dB、时间常数 > 0、迟滞 0..24 dB）
@@ -297,7 +300,7 @@ WAV 实测：
 - **不是**真正的自动增益控制（无电平检测、无 attack/release 平滑）
 - `ns` 只是宽带噪声门，**没有**噪声估计与谱增益，也没有 AEC
 - 无加窗、无滑窗、无 overlap-add（因此也做不了频谱降噪）
-- biquad 仅单声道；多声道直接报错（`ns` 支持多声道）
+- biquad 模块支持最多 32 声道（每声道独立状态）；超过 32 声道明确报错
 - 无任意 WAV 格式解码（只有 mono/16-bit/48 kHz/format=1 且无前置额外 chunk）
 - 无 tinyalsa 设备接入、无实时线程与设备同步；不支持分块 WAV 流式处理
 - 无带延迟模块的 flush/drain 协议；模块必须同步写满全部输出样本

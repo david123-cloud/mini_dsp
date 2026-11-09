@@ -29,4 +29,24 @@ int fft_forward(struct fft_runtime *fft, const float *input, uint32_t frames);
  */
 int fft_transform(struct fft_runtime *fft, int inverse);
 
+/*
+ * Runtime-sized transform for callers that cannot live with the fixed 256
+ * points (for example a 960-frame period, which is not a multiple of 256).
+ *
+ * The size must be a power of two; the plan owns its buffers and must be
+ * released with fft_plan_destroy().  setup allocates, processing does not.
+ */
+struct fft_plan {
+    uint32_t size;
+    float *real;
+    float *imag;
+};
+
+int fft_plan_init(struct fft_plan *plan, uint32_t size);
+void fft_plan_destroy(struct fft_plan *plan);
+
+/* frames must equal the plan size. */
+int fft_plan_forward(struct fft_plan *plan, const float *input, uint32_t frames);
+int fft_plan_inverse(struct fft_plan *plan);
+
 #endif /* MINI_DSP_FFT_H */

@@ -1,13 +1,24 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "biquad.h"
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "dsp_error.h"
 #include "dsp_math.h"
 
-/* Direct form I keeps one history set, so only mono input is supported. */
-#define BIQUAD_SUPPORTED_CHANNELS 1u
+/* Direct form I keeps one history set per channel, so the module owns one
+ * biquad per channel instead of refusing anything but mono. */
+#define BIQUAD_MAX_CHANNELS 32u
+
+struct biquad_module {
+    struct biquad_config config;
+    int sample_rate;
+    uint32_t channel_count; /* 0 until the first process call */
+    struct biquad channels[BIQUAD_MAX_CHANNELS];
+};
 
 static const struct dsp_module_ops g_biquad_ops = {
     biquad_module_process,
@@ -172,10 +183,11 @@ int biquad_process_mono(struct biquad *bq, float *data, uint32_t frames)
 
 int biquad_module_process(void *ctx, struct dsp_buffer *in, struct dsp_buffer *out)
 {
-    struct biquad *bq = (struct biquad *)ctx;
+    struct biquad_module *module = (struct biquad_module *)ctx;
     uint32_t frame;
+    uint32_t channel;
 
-    if (bq == NULL || in == NULL || out == NULL) {
+    if (module == NULL || in == NULL || out == NULL) {
         return DSP_ERR_INVALID_ARG;
     }
     if (in->data == NULL || out->data == NULL) {
@@ -184,19 +196,43 @@ int biquad_module_process(void *ctx, struct dsp_buffer *in, struct dsp_buffer *o
     if (in->frames != out->frames || in->channels != out->channels) {
         return DSP_ERR_INVALID_ARG;
     }
-    /* One shared history set cannot serve several channels. */
-    if (in->channels != BIQUAD_SUPPORTED_CHANNELS) {
+    if (in->channels == 0u || in->channels > BIQUAD_MAX_CHANNELS) {
         return DSP_ERR_UNSUPPORTED;
     }
+
+    /* The buffer's channel count is only known here, so the per-channel
+     * instances are created on the first call and rebuilt if it changes. */
+    if (module->channel_count != in->channels) {
+        for (channel = 0u; channel < in->channels; ++channel) {
+            if (biquad_init(&module->channels[channel], &module->config, module->sample_rate) !=
+                DSP_OK) {
+                return DSP_ERR_STATE;
+            }
+        }
+        module->channel_count = in->channels;
+    }
+
     for (frame = 0u; frame < in->frames; ++frame) {
-        out->data[frame] = biquad_process_sample(bq, in->data[frame]);
+        for (channel = 0u; channel < in->channels; ++channel) {
+            size_t index = (size_t)frame * (size_t)in->channels + (size_t)channel;
+
+            out->data[index] = biquad_process_sample(&module->channels[channel], in->data[index]);
+        }
     }
     return DSP_OK;
 }
 
 void biquad_module_reset(void *ctx)
 {
-    biquad_reset((struct biquad *)ctx);
+    struct biquad_module *module = (struct biquad_module *)ctx;
+    uint32_t channel;
+
+    if (module == NULL) {
+        return;
+    }
+    for (channel = 0u; channel < module->channel_count; ++channel) {
+        biquad_reset(&module->channels[channel]);
+    }
 }
 
 void biquad_module_destroy(void *ctx)
@@ -207,10 +243,14 @@ void biquad_module_destroy(void *ctx)
 struct dsp_module *biquad_module_create(const struct biquad_config *cfg, int sample_rate)
 {
     struct dsp_module *module;
-    struct biquad *bq;
+    struct biquad_module *state;
     int status;
 
     if (cfg == NULL) {
+        return NULL;
+    }
+    status = biquad_validate_config(cfg, sample_rate);
+    if (status != DSP_OK) {
         return NULL;
     }
 
@@ -218,21 +258,18 @@ struct dsp_module *biquad_module_create(const struct biquad_config *cfg, int sam
     if (module == NULL) {
         return NULL;
     }
-    bq = (struct biquad *)calloc(1u, sizeof(*bq));
-    if (bq == NULL) {
+    state = (struct biquad_module *)calloc(1u, sizeof(*state));
+    if (state == NULL) {
         free(module);
         return NULL;
     }
 
-    status = biquad_init(bq, cfg, sample_rate);
-    if (status != DSP_OK) {
-        free(bq);
-        free(module);
-        return NULL;
-    }
+    state->config = *cfg;
+    state->sample_rate = sample_rate;
+    state->channel_count = 0u;
 
     module->name = "biquad";
-    module->priv = bq;
+    module->priv = state;
     module->ops = &g_biquad_ops;
     return module;
 }

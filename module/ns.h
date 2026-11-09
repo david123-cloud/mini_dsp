@@ -29,7 +29,7 @@
  */
 
 /* Per-channel state slots; inputs with more channels are refused. */
-#define NS_MAX_CHANNELS 8
+#define NS_MAX_CHANNELS 32
 
 struct ns_config {
     float threshold_db; /* gate threshold in dBFS, -96..0, default -50 */
