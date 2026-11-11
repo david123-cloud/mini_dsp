@@ -37,6 +37,7 @@ struct ns_config {
     float attack_ms;    /* gain closing time constant, > 0, default 1 */
     float release_ms;   /* gain opening time constant, > 0, default 50 */
     float hysteresis_db; /* width between close and open thresholds, 0..24, default 3 */
+    float knee_db;       /* soft-knee width above the threshold, 0..24, default 6 */
 };
 
 struct ns_channel_state {
@@ -54,6 +55,7 @@ struct ns {
     float release_coef;
     float threshold_low;  /* linear, closes below this */
     float threshold_high; /* linear, opens above this */
+    float knee_high;      /* linear, fully open at or above this */
     float floor_gain;     /* linear gain while closed */
 };
 

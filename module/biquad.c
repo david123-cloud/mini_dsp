@@ -12,6 +12,7 @@
 /* Direct form I keeps one history set per channel, so the module owns one
  * biquad per channel instead of refusing anything but mono. */
 #define BIQUAD_MAX_CHANNELS 32u
+#define BIQUAD_SHELF_SQRT2 1.41421356f
 
 struct biquad_module {
     struct biquad_config config;
@@ -46,7 +47,20 @@ static int biquad_validate_config(const struct biquad_config *cfg, int sample_ra
     if (!(cfg->q > 0.0f)) {
         return DSP_ERR_RANGE;
     }
-    if (cfg->type != BIQUAD_LOWPASS && cfg->type != BIQUAD_HIGHPASS) {
+    switch (cfg->type) {
+    case BIQUAD_LOWPASS:
+    case BIQUAD_HIGHPASS:
+    case BIQUAD_NOTCH:
+        /* gain is unused by these shapes */
+        break;
+    case BIQUAD_PEAK:
+    case BIQUAD_LOWSHELF:
+    case BIQUAD_HIGHSHELF:
+        if (cfg->gain < -60.0f || cfg->gain > 60.0f) {
+            return DSP_ERR_RANGE;
+        }
+        break;
+    default:
         return DSP_ERR_UNSUPPORTED;
     }
     return DSP_OK;
@@ -62,6 +76,8 @@ int biquad_design(const struct biquad_config *cfg, int sample_rate, struct biqua
     float b0;
     float b1;
     float b2;
+    float a1;
+    float a2;
     int status;
 
     if (out == NULL) {
@@ -76,27 +92,91 @@ int biquad_design(const struct biquad_config *cfg, int sample_rate, struct biqua
     sin_omega = sinf(omega);
     cos_omega = cosf(omega);
     alpha = sin_omega / (2.0f * cfg->q);
-    a0 = 1.0f + alpha;
+
+    switch (cfg->type) {
+    case BIQUAD_HIGHPASS:
+        b0 = (1.0f + cos_omega) * 0.5f;
+        b1 = -(1.0f + cos_omega);
+        b2 = b0;
+        a0 = 1.0f + alpha;
+        a1 = -2.0f * cos_omega;
+        a2 = 1.0f - alpha;
+        break;
+
+    case BIQUAD_LOWPASS:
+        b0 = (1.0f - cos_omega) * 0.5f;
+        b1 = 1.0f - cos_omega;
+        b2 = b0;
+        a0 = 1.0f + alpha;
+        a1 = -2.0f * cos_omega;
+        a2 = 1.0f - alpha;
+        break;
+
+    case BIQUAD_NOTCH:
+        b0 = 1.0f;
+        b1 = -2.0f * cos_omega;
+        b2 = 1.0f;
+        a0 = 1.0f + alpha;
+        a1 = -2.0f * cos_omega;
+        a2 = 1.0f - alpha;
+        break;
+
+    case BIQUAD_PEAK: {
+        /* RBJ peaking EQ.  A = 10^(dB/40), so the boost at the centre
+         * frequency is exactly the configured number of dB. */
+        float big_a = powf(10.0f, cfg->gain / 40.0f);
+
+        b0 = 1.0f + alpha * big_a;
+        b1 = -2.0f * cos_omega;
+        b2 = 1.0f - alpha * big_a;
+        a0 = 1.0f + alpha / big_a;
+        a1 = -2.0f * cos_omega;
+        a2 = 1.0f - alpha / big_a;
+        break;
+    }
+
+    case BIQUAD_LOWSHELF: {
+        /* Shelf slope S = 1: alpha becomes independent of the gain. */
+        float big_a = powf(10.0f, cfg->gain / 40.0f);
+        float sqrt_a = sqrtf(big_a);
+        float two_sqrt_a_alpha = 2.0f * sqrt_a * (sin_omega * 0.5f * BIQUAD_SHELF_SQRT2);
+
+        b0 = big_a * ((big_a + 1.0f) - (big_a - 1.0f) * cos_omega + two_sqrt_a_alpha);
+        b1 = 2.0f * big_a * ((big_a - 1.0f) - (big_a + 1.0f) * cos_omega);
+        b2 = big_a * ((big_a + 1.0f) - (big_a - 1.0f) * cos_omega - two_sqrt_a_alpha);
+        a0 = (big_a + 1.0f) + (big_a - 1.0f) * cos_omega + two_sqrt_a_alpha;
+        a1 = -2.0f * ((big_a - 1.0f) + (big_a + 1.0f) * cos_omega);
+        a2 = (big_a + 1.0f) + (big_a - 1.0f) * cos_omega - two_sqrt_a_alpha;
+        break;
+    }
+
+    case BIQUAD_HIGHSHELF: {
+        float big_a = powf(10.0f, cfg->gain / 40.0f);
+        float sqrt_a = sqrtf(big_a);
+        float two_sqrt_a_alpha = 2.0f * sqrt_a * (sin_omega * 0.5f * BIQUAD_SHELF_SQRT2);
+
+        b0 = big_a * ((big_a + 1.0f) + (big_a - 1.0f) * cos_omega + two_sqrt_a_alpha);
+        b1 = -2.0f * big_a * ((big_a - 1.0f) + (big_a + 1.0f) * cos_omega);
+        b2 = big_a * ((big_a + 1.0f) + (big_a - 1.0f) * cos_omega - two_sqrt_a_alpha);
+        a0 = (big_a + 1.0f) - (big_a - 1.0f) * cos_omega + two_sqrt_a_alpha;
+        a1 = 2.0f * ((big_a - 1.0f) - (big_a + 1.0f) * cos_omega);
+        a2 = (big_a + 1.0f) - (big_a - 1.0f) * cos_omega - two_sqrt_a_alpha;
+        break;
+    }
+
+    default:
+        return DSP_ERR_UNSUPPORTED;
+    }
 
     if (!isfinite(a0) || fabsf(a0) < 1e-12f) {
         return DSP_ERR_STATE;
     }
 
-    if (cfg->type == BIQUAD_HIGHPASS) {
-        b0 = (1.0f + cos_omega) * 0.5f;
-        b1 = -(1.0f + cos_omega);
-        b2 = b0;
-    } else {
-        b0 = (1.0f - cos_omega) * 0.5f;
-        b1 = 1.0f - cos_omega;
-        b2 = b0;
-    }
-
     out->b0 = b0 / a0;
     out->b1 = b1 / a0;
     out->b2 = b2 / a0;
-    out->a1 = (-2.0f * cos_omega) / a0;
-    out->a2 = (1.0f - alpha) / a0;
+    out->a1 = a1 / a0;
+    out->a2 = a2 / a0;
     out->x1 = 0.0f;
     out->x2 = 0.0f;
     out->y1 = 0.0f;

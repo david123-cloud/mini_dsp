@@ -11,6 +11,7 @@
 #define NS_DEFAULT_ATTACK_MS 1.0f
 #define NS_DEFAULT_RELEASE_MS 50.0f
 #define NS_DEFAULT_HYSTERESIS_DB 3.0f
+#define NS_DEFAULT_KNEE_DB 6.0f
 
 #define NS_MIN_DB (-96.0f)
 #define NS_MAX_DB 0.0f
@@ -67,6 +68,9 @@ static int ns_validate(const struct ns_config *cfg, int sample_rate)
     if (cfg->hysteresis_db < 0.0f || cfg->hysteresis_db > NS_MAX_HYSTERESIS_DB) {
         return DSP_ERR_RANGE;
     }
+    if (cfg->knee_db < 0.0f || cfg->knee_db > NS_MAX_HYSTERESIS_DB) {
+        return DSP_ERR_RANGE;
+    }
     return DSP_OK;
 }
 
@@ -80,6 +84,7 @@ void ns_config_default(struct ns_config *cfg)
     cfg->attack_ms = NS_DEFAULT_ATTACK_MS;
     cfg->release_ms = NS_DEFAULT_RELEASE_MS;
     cfg->hysteresis_db = NS_DEFAULT_HYSTERESIS_DB;
+    cfg->knee_db = NS_DEFAULT_KNEE_DB;
 }
 
 int ns_init(struct ns *ns, const struct ns_config *cfg, int sample_rate)
@@ -100,6 +105,7 @@ int ns_init(struct ns *ns, const struct ns_config *cfg, int sample_rate)
 
     ns->threshold_low = ns_db_to_linear(cfg->threshold_db);
     ns->threshold_high = ns_db_to_linear(cfg->threshold_db + cfg->hysteresis_db);
+    ns->knee_high = ns_db_to_linear(cfg->threshold_db + cfg->knee_db);
     ns->floor_gain = ns_db_to_linear(cfg->floor_db);
 
     ns->attack_coef = ns_time_coef(cfg->attack_ms, sample_rate);
@@ -128,6 +134,28 @@ void ns_reset(struct ns *ns)
         ns->channels[index].open = 0;
     }
     ns->channel_count = 0u;
+}
+
+/* Soft-knee expansion curve: fully attenuated at or below the threshold,
+ * fully open at the top of the knee, linear in amplitude in between.  The
+ * hysteresis latch still decides when we call the gate "open" for reporting,
+ * but the gain itself follows this curve so it never jumps. */
+static float ns_target_gain(const struct ns *ns, float envelope)
+{
+    float span;
+
+    if (envelope >= ns->knee_high) {
+        return 1.0f;
+    }
+    if (envelope <= ns->threshold_low) {
+        return ns->floor_gain;
+    }
+    span = ns->knee_high - ns->threshold_low;
+    if (!(span > 0.0f)) {
+        return 1.0f;
+    }
+    return ns->floor_gain +
+           (1.0f - ns->floor_gain) * (envelope - ns->threshold_low) / span;
 }
 
 int ns_process(struct ns *ns, struct dsp_buffer *in, struct dsp_buffer *out)
@@ -177,7 +205,7 @@ int ns_process(struct ns *ns, struct dsp_buffer *in, struct dsp_buffer *out)
                 }
             }
 
-            target = (state->open != 0) ? 1.0f : ns->floor_gain;
+            target = ns_target_gain(ns, state->envelope);
             coef = (target < state->gain) ? ns->attack_coef : ns->release_coef;
             state->gain += coef * (target - state->gain);
 

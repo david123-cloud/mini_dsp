@@ -28,8 +28,8 @@ mini_dsp/
 │   ├── fft.h                  # struct fft_runtime + 固定 256 点接口
 │   └── fft.c                  # 基 2、迭代、原地 FFT/IFFT
 ├── module/                    # dsp_module 实现
-│   ├── biquad.h / biquad.c    # RBJ 公式，高通 / 低通，直接 I 型；模块支持 32 声道
-│   ├── agc.h / agc.c          # **固定增益**模块（历史名称为 AGC）
+│   ├── biquad.h / biquad.c    # RBJ：高通/低通/notch/peaking/高低搁架，32 声道
+│   ├── agc.h / agc.c          # 真 AGC：包络检测 + 联动增益 + attack/release
 │   └── ns.h / ns.c            # 宽带噪声门（向下扩展器），多声道
 ├── audio/                     # 文件 I/O 与数值转换
 │   ├── wav.h / wav.c          # 44 字节标准头的 WAV 读写
@@ -185,17 +185,25 @@ int wav_write(const char *path, const struct wav_file *wav);
 - 直接 I 型：`y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]`
 - RBJ 公式：`omega = 2*pi*fc/fs`，`alpha = sin(omega)/(2Q)`，`a0 = 1 + alpha`，
   `b0/b1/b2/a1/a2` 全部先除以 `a0` 再保存
-- 高通 `b0=(1+cos)/2, b1=-(1+cos), b2=b0`；低通 `b0=(1-cos)/2, b1=1-cos, b2=b0`
-- 校验采样率、有限数、`0 < fc < fs/2`、`q > 0`；NOTCH/PEAK/SHELF 返回 `DSP_ERR_UNSUPPORTED`
+- 支持五种形状：**低通、高通、notch、peaking EQ、低搁架、高搁架**
+  - peaking：`A = 10^(dB/40)`，`b0=1+αA, b2=1-αA, a0=1+α/A`，中心频率处增益即配置的 dB
+  - 搁架：S = 1 的斜率形式，`α` 与增益解耦；低搁架改低频段，高搁架改高频段
+- 校验采样率、有限数、`0 < fc < fs/2`、`q > 0`、增益 `-60..+60 dB`
 - 创建时先置为直通系数 + 零历史，再套用设计结果；设计失败则对象保持直通
 - `reset` 只清历史，不动系数
-- 多声道输入明确拒绝（`DSP_ERR_UNSUPPORTED`），不共用一组历史状态
+- 模块支持最多 32 声道，每声道独立历史
 
-**AGc（重要声明）**
+**AGC（真正的自动增益控制）**
 
-> 名为 AGC 的模块**并不是自动增益控制**。它当前是固定增益：`y = x * gain`，`gain` 默认 1.0。
-> `target_level=1.0`、`attack_ms=10.0`、`release_ms=100.0` 只是为将来预留的字段，
-> 当前不参与任何计算，也没有电平检测或平滑。`reset` 把 `gain` 恢复为 1.0。
+- 前馈结构：逐声道峰值包络（快起慢落）→ 取最响声道 → 单一联动增益
+  （多声道共用一个增益，避免声像左右漂移）
+- 控制律：`desired = target / max(envelope, noise_floor)`，再钳到
+  `[min_gain_db, max_gain_db]`
+- 增益平滑分离：**衰减快**（attack，默认 5 ms）、**恢复慢**（release，默认 200 ms）
+- `noise_floor_db` 防止静音被放大成噪声（默认 -70 dBFS，必须低于目标电平）
+- `reset` 清包络并把增益恢复为 1.0
+- 实测：0.02 幅度输入被提升 26 dB、输出峰值收敛到 0.42（目标 0.5）；
+  0.8 幅度输入被压 -3.7 dB、输出峰值 0.53
 
 **FFT**
 
@@ -227,16 +235,22 @@ int wav_write(const char *path, const struct wav_file *wav);
 > 注意：这是**时域噪声门 / 向下扩展器**，不是"噪声估计 + 谱增益"的频谱降噪。
 > 频谱 NS 需要分帧和 overlap-add，mini_dsp 目前没有，模块也不假装有。
 
-- 逐样本处理：包络跟随 → 带迟滞的阈值判决 → 增益平滑，全程不需要分帧
-- 阈值下方把增益压到 `floor_db`（默认 -24 dB），阈值上方回到 1.0
-- `hysteresis_db` 拉开"关门"和"开门"两个阈值，避免在阈值附近抖动
+- 逐样本处理：包络跟随 → 阈值判决 → 增益平滑，全程不需要分帧
+- **软拐点**：阈值上方 `knee_db`（默认 6 dB）的区间内，增益按幅度线性过渡，
+  不再从 `floor_db` 直接跳到 1.0——这是"门"和"扩展器"的区别
+- 阈值下方把增益压到 `floor_db`（默认 -24 dB），拐点顶部以上回到 1.0
+- `hysteresis_db` 只用于"是否算开门"的状态判定，不再决定增益跳变
 - `attack_ms` 控制增益关闭速度，`release_ms` 控制恢复速度（一阶平滑，
   系数由 `1 - exp(-1/(tau*fs))` 推出）
 - **多声道支持**：每个声道独立的包络 / 增益 / 锁存状态，最多 `NS_MAX_CHANNELS`(32) 路，
   超出明确返回 `DSP_ERR_UNSUPPORTED`
 - 声道数变化会重置历史，避免把上一个布局的状态套到新布局上
-- 配置全部做范围校验（-96..0 dB、时间常数 > 0、迟滞 0..24 dB）
+- 配置全部做范围校验（-96..0 dB、时间常数 > 0、迟滞 0..24 dB、拐点 0..24 dB）
 - `reset` 只清包络/增益/锁存，保留配置
+
+> 距离真正的频谱降噪还差什么：噪声功率谱估计、每 bin 的增益曲线、overlap-add。
+> 这三样都要求帧缓冲和固定延迟，而当前模块契约要求同步写满全部输出样本，
+> 所以它们属于"需要先扩展 pipeline 的延迟/flush 协议"才能做的事。
 
 **WAV**
 
@@ -263,7 +277,7 @@ int wav_write(const char *path, const struct wav_file *wav);
 | `cmake -S . -B build-verify` + `cmake --build` | ✅ 0 警告 0 错误 |
 | `./build-verify/dsp_demo fft` | ✅ 退出码 0 |
 | `./build-verify/dsp_demo wav tests/temp.wav tests/output.wav` | ✅ 退出码 0 |
-| `ctest` | ✅ 2/2 通过（`dsp_fft_demo`、`dsp_wav_demo`） |
+| `ctest` | ✅ 3/3 通过（`dsp_fft_demo`、`dsp_wav_demo`、`module_selftest`） |
 | `bash tests/verify.sh` | ✅ ALL CHECKS PASSED |
 | 管线自检（0/1/2/3 模块、超大块、所有权、错误传播、reset/destroy 次数） | ✅ 27 项全过 |
 | ASan/UBSan/LeakSanitizer | ✅ 所有运行（含失败路径）无报告 |

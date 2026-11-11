@@ -71,6 +71,24 @@ if(NOT MSVC)
     target_link_libraries(dsp_demo PRIVATE m)
 endif()
 
+# Self-checking test for the module algorithms (biquad EQ shapes, AGC, NS).
+add_executable(module_selftest tests/module_selftest.c)
+target_link_libraries(module_selftest PRIVATE dsp_core)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(module_selftest PRIVATE -Wall -Wextra -Wpedantic -Wshadow)
+    if(MINI_DSP_WERROR)
+        target_compile_options(module_selftest PRIVATE -Werror)
+    endif()
+    if(MINI_DSP_SANITIZE)
+        target_compile_options(module_selftest PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -g)
+        target_link_options(module_selftest PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+if(NOT MSVC)
+    target_link_libraries(module_selftest PRIVATE m)
+endif()
+
 # CTest registration is opt-in: the demos are meant to be run by hand during
 # your own experiments.  Turn it back on with -DMINI_DSP_REGISTER_TESTS=ON.
 option(MINI_DSP_REGISTER_TESTS "Register the demos with CTest" OFF)
@@ -87,4 +105,6 @@ if(MINI_DSP_REGISTER_TESTS)
         COMMAND dsp_demo wav tests/temp.wav ${CMAKE_CURRENT_BINARY_DIR}/tests_output.wav
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    add_test(NAME module_selftest COMMAND module_selftest)
 endif()

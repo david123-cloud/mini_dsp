@@ -8,18 +8,17 @@
 enum biquad_type {
     BIQUAD_LOWPASS = 0,
     BIQUAD_HIGHPASS = 1,
-    /* Reserved shapes: the enumerators exist, the design does not. */
     BIQUAD_NOTCH = 2,
-    BIQUAD_PEAK = 3,
-    BIQUAD_LOWSHELF = 4,
-    BIQUAD_HIGHSHELF = 5
+    BIQUAD_PEAK = 3,     /* peaking EQ, gain in dB at fc */
+    BIQUAD_LOWSHELF = 4, /* shelf, gain in dB below fc (S = 1) */
+    BIQUAD_HIGHSHELF = 5 /* shelf, gain in dB above fc (S = 1) */
 };
 
 struct biquad_config {
     enum biquad_type type;
-    float fc;   /* cutoff frequency in Hz, 0 < fc < fs/2 */
-    float q;    /* quality factor, > 0, unitless */
-    float gain; /* reserved for a future EQ stage; unused by low/high pass */
+    float fc;   /* cutoff / centre frequency in Hz, 0 < fc < fs/2 */
+    float q;    /* quality factor, > 0, unitless (unused by the shelves) */
+    float gain; /* dB, -60..+60; used by peak and both shelves */
 };
 
 /*
